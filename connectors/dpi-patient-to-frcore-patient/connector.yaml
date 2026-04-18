@@ -1,0 +1,107 @@
+name: dpi-patient-to-frcore-patient
+version: 1.0.0
+author: nriss
+tags: [patient, dpi, frcore, ans]
+
+description:
+  fr: "Export des patients actifs du DPI vers Patient FR Core"
+  en: "Export active DPI patients to FR Core Patient"
+
+source:
+  datasource: dpi_test
+  query: |
+    SELECT
+      p.ipp,
+      p.ins_nir,
+      p.nom_naissance,
+      p.prenom_usuel,
+      p.date_naissance,
+      p.sexe,
+      p.numero_voie,
+      p.libelle_voie,
+      p.code_postal,
+      p.commune,
+      p.pays,
+      p.telephone
+    FROM patient p
+    WHERE p.statut = 'ACTIF'
+
+target:
+  resource: Patient
+  profile: https://hl7.fr/ig/fhir/core/StructureDefinition/fr-core-patient
+
+lifecycle:
+  strategy: upsert
+  match_by:
+    - column: ipp
+      fhir_path: Patient.identifier[type.coding.code='IPP'].value
+  on_conflict:
+    - field: Patient.name
+      strategy: keep_existing
+    - field: Patient.identifier
+      strategy: merge
+
+mappings:
+
+  - column: ipp
+    target: Patient.identifier
+    as:
+      identifier.use: "official"
+      identifier.type.coding[0].system: "https://hl7.fr/ig/fhir/core/CodeSystem/fr-core-cs-v2-0203"
+      identifier.type.coding[0].code: "IPP"
+      identifier.value: "$.ipp"
+
+  - column: ins_nir
+    target: Patient.identifier
+    as:
+      identifier.use: "official"
+      identifier.type.coding[0].system: "https://hl7.fr/ig/fhir/core/CodeSystem/fr-core-cs-v2-0203"
+      identifier.type.coding[0].code: "INS-NIR"
+      identifier.system: "urn:oid:1.2.250.1.213.1.4.8"
+      identifier.value: "$.ins_nir"
+
+  - column: nom_naissance
+    target: Patient.name.family
+
+  - column: prenom_usuel
+    target: Patient.name.given[0]
+
+  - column: date_naissance
+    target: Patient.birthDate
+    transform:
+      type: date
+      from: YYYY-MM-DD
+
+  - column: sexe
+    target: Patient.gender
+    transform:
+      type: map
+      values:
+        M: male
+        F: female
+        I: other
+        U: unknown
+      default: unknown
+
+  - columns: [numero_voie, libelle_voie]
+    target: Patient.address.line[0]
+    transform:
+      type: concat
+      separator: " "
+
+  - column: code_postal
+    target: Patient.address.postalCode
+
+  - column: commune
+    target: Patient.address.city
+
+  - column: pays
+    target: Patient.address.country
+    default: "FRA"
+
+  - column: telephone
+    target: Patient.telecom
+    as:
+      telecom.system: "phone"
+      telecom.use: "mobile"
+      telecom.value: "$.telephone"

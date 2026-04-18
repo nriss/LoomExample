@@ -1,0 +1,112 @@
+name: dpi-sejour-to-fhir-encounter
+version: 1.0.0
+author: nriss
+tags: [encounter, sejour, dpi]
+
+description:
+  fr: "Export des séjours DPI vers Encounter FHIR R4"
+  en: "Export DPI hospital stays to FHIR R4 Encounter"
+
+source:
+  datasource: dpi_test
+  query: |
+    SELECT
+      s.numero_sejour,
+      s.date_entree,
+      s.date_sortie,
+      s.statut,
+      s.type_sejour,
+      s.mode_entree,
+      s.libelle_mode_entree,
+      s.mode_sortie,
+      s.libelle_mode_sortie,
+      s.uf_code,
+      s.uf_libelle,
+      s.dp_cim,
+      s.dp_libelle,
+      p.ipp
+    FROM sejour s
+    JOIN patient p ON p.id_patient = s.id_patient
+    WHERE s.statut != 'ANNULE'
+    ORDER BY s.date_entree DESC
+
+target:
+  resource: Encounter
+
+lifecycle:
+  strategy: upsert
+  match_by:
+    - column: numero_sejour
+      fhir_path: Encounter.identifier[type.coding.code='NDA'].value
+
+mappings:
+
+  - column: numero_sejour
+    target: Encounter.identifier
+    as:
+      identifier.use: "official"
+      identifier.type.coding[0].system: "https://hl7.fr/ig/fhir/core/CodeSystem/fr-core-cs-v2-0203"
+      identifier.type.coding[0].code: "NDA"
+      identifier.value: "$.numero_sejour"
+
+  - column: statut
+    target: Encounter.status
+    transform:
+      type: map
+      values:
+        EN_COURS: in-progress
+        TERMINE: finished
+        ANNULE: cancelled
+      default: unknown
+
+  - column: type_sejour
+    target: Encounter.class
+    as:
+      class.system: "http://terminology.hl7.org/CodeSystem/v3-ActCode"
+      class.code: "$.type_sejour"
+      class.display: "$.uf_libelle"
+
+  - column: date_entree
+    target: Encounter.period.start
+    transform:
+      type: date
+      from: YYYY-MM-DD
+
+  - column: date_sortie
+    target: Encounter.period.end
+    transform:
+      type: date
+      from: YYYY-MM-DD
+
+  - column: uf_code
+    target: Encounter.serviceType
+    as:
+      serviceType.coding[0].code: "$.uf_code"
+      serviceType.text: "$.uf_libelle"
+
+  - column: dp_cim
+    target: Encounter.reasonCode
+    as:
+      reasonCode.coding[0].system: "http://hl7.org/fhir/sid/icd-10"
+      reasonCode.coding[0].code: "$.dp_cim"
+      reasonCode.text: "$.dp_libelle"
+
+  - column: mode_entree
+    target: Encounter.hospitalization
+    as:
+      hospitalization.admitSource.coding[0].system: "https://mos.esante.gouv.fr/NOS/TRE_R213-ModePriseEnCharge/FHIR/TRE-R213-ModePriseEnCharge"
+      hospitalization.admitSource.coding[0].code: "$.mode_entree"
+      hospitalization.admitSource.text: "$.libelle_mode_entree"
+
+  - column: mode_sortie
+    target: Encounter.hospitalization
+    as:
+      hospitalization.dischargeDisposition.coding[0].system: "https://mos.esante.gouv.fr/NOS/TRE_R213-ModePriseEnCharge/FHIR/TRE-R213-ModePriseEnCharge"
+      hospitalization.dischargeDisposition.coding[0].code: "$.mode_sortie"
+      hospitalization.dischargeDisposition.text: "$.libelle_mode_sortie"
+
+  - column: ipp
+    target: Encounter.subject.reference
+    transform:
+      type: template
+      value: "Patient?identifier=https://hl7.fr/ig/fhir/core/CodeSystem/fr-core-cs-v2-0203|IPP|${ipp}"
